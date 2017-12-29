@@ -147,12 +147,17 @@ namespace Tectonic
                     WaitSemaphores = new[] { previousSemaphore }
                 }, null);
 
+            this.presentQueue.WaitIdle();
+
             this.presentQueue.Present(this.renderEndSemaphore, this.swapChain, nextImage, new Result[1]);
         }
 
         public override void Stop()
         {
             this.updateLoop.Deregister(this);
+
+            this.swapChain.Destroy();
+            this.swapChain = null;
 
             this.surface.Destroy();
             this.surface = null;
@@ -259,7 +264,7 @@ namespace Tectonic
                     {
                         Format = this.swapChainFormat,
                         Samples = SampleCountFlags.SampleCount1,
-                        LoadOp = AttachmentLoadOp.DontCare,
+                        LoadOp = AttachmentLoadOp.Load,
                         StoreOp = AttachmentStoreOp.Store,
                         StencilLoadOp = AttachmentLoadOp.DontCare,
                         StencilStoreOp = AttachmentStoreOp.DontCare,
@@ -270,8 +275,8 @@ namespace Tectonic
                     {
                         Format = this.depthImages[0].Format,
                         Samples = SampleCountFlags.SampleCount1,
-                        LoadOp = AttachmentLoadOp.Clear,
-                        StoreOp = AttachmentStoreOp.DontCare,
+                        LoadOp = AttachmentLoadOp.Load,
+                        StoreOp = AttachmentStoreOp.Store,
                         StencilLoadOp = AttachmentLoadOp.DontCare,
                         StencilStoreOp = AttachmentStoreOp.DontCare,
                         InitialLayout = ImageLayout.DepthStencilAttachmentOptimal,
@@ -306,7 +311,7 @@ namespace Tectonic
                         SourceSubpass = Constants.SubpassExternal,
                         DestinationSubpass = 0,
                         SourceStageMask = PipelineStageFlags.BottomOfPipe,
-                        SourceAccessMask = AccessFlags.MemoryRead,
+                        SourceAccessMask = AccessFlags.ColorAttachmentRead | AccessFlags.ColorAttachmentWrite,
                         DestinationStageMask = PipelineStageFlags.ColorAttachmentOutput,
                         DestinationAccessMask = AccessFlags.ColorAttachmentRead | AccessFlags.ColorAttachmentWrite
                     },
@@ -316,8 +321,8 @@ namespace Tectonic
                         DestinationSubpass = Constants.SubpassExternal,
                         SourceStageMask = PipelineStageFlags.ColorAttachmentOutput,
                         SourceAccessMask = AccessFlags.ColorAttachmentRead | AccessFlags.ColorAttachmentWrite,
-                        DestinationStageMask = PipelineStageFlags.BottomOfPipe,
-                        DestinationAccessMask = AccessFlags.MemoryRead
+                        DestinationStageMask = PipelineStageFlags.TopOfPipe,
+                        DestinationAccessMask = AccessFlags.ColorAttachmentRead | AccessFlags.ColorAttachmentWrite
                     }
                 });
         }
@@ -501,7 +506,7 @@ namespace Tectonic
                                                 SourceQueueFamilyIndex = Constants.QueueFamilyIgnored,
                                                 DestinationQueueFamilyIndex = Constants.QueueFamilyIgnored,
                                                 SourceAccessMask = AccessFlags.ColorAttachmentRead | AccessFlags.ColorAttachmentWrite,
-                                                DestinationAccessMask = AccessFlags.None,
+                                                DestinationAccessMask = AccessFlags.MemoryRead,
                                                 Image = this.swapChainImages[bufferIndex],
                                                 SubresourceRange = imageColorRange
                                             });

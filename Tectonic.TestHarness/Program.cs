@@ -1,5 +1,4 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
-using SharpVk;
 
 namespace Tectonic
 {
@@ -26,10 +25,8 @@ namespace Tectonic
 
             game.Initialise();
 
-            var clearStage = vulkanService.CreateStage<ClearStage>();
-            clearStage.ClearRegion = new Rect2D(new Offset2D(100, 100), new Extent2D(200, 200));
-            var clearStage2 = vulkanService.CreateStage<ClearStage>();
-            clearStage2.ClearRegion = new Rect2D(new Offset2D(500, 300), new Extent2D(200, 200));
+            vulkanService.CreateStage<ClearStage>();
+            vulkanService.CreateStage<QuadStage>();
 
             game.Start();
 

@@ -86,6 +86,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ClearStage.cs" />
+    <Compile Include="QuadStage.cs" />
     <Compile Include="ServiceCollectionExtensions.cs" />
     <Compile Include="ServiceProviderExtensions.cs" />
     <Compile Include="VulkanBufferManager.cs" />

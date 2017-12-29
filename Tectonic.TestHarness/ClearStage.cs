@@ -1,10 +1,17 @@
-﻿using SharpVk;
+﻿using GlmSharp;
+using SharpVk;
 
 namespace Tectonic
 {
     public class ClearStage
         : RenderStage
     {
+        public vec4? ClearColour
+        {
+            get;
+            set;
+        }
+
         public Rect2D? ClearRegion
         {
             get;
@@ -41,12 +48,23 @@ namespace Tectonic
 
             clearRegion = new Rect2D(clearRegion.Offset, new Extent2D(constrainedWidth, constrainedHeight));
 
+            vec4 clearColour = this.ClearColour ?? new vec4(0, 0, 0, 1);
+
             commandBuffer.ClearAttachments(
-                    new ClearAttachment
+                    new[]
                     {
-                        AspectMask = ImageAspectFlags.Color,
-                        ClearValue = new ClearColorValue(0f, 0f, 1f, 1f),
-                        ColorAttachment = 0
+                        new ClearAttachment
+                        {
+                            AspectMask = ImageAspectFlags.Color,
+                            ClearValue = new ClearColorValue(clearColour.x, clearColour.y, clearColour.z, clearColour.w),
+                            ColorAttachment = 0
+                        },
+                        new ClearAttachment
+                        {
+                            AspectMask = ImageAspectFlags.Depth,
+                            ClearValue = new ClearDepthStencilValue(1f, 0),
+                            ColorAttachment = 1
+                        }
                     },
                     new ClearRect
                     {
