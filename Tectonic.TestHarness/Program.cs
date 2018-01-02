@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using GlmSharp;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Tectonic
 {
@@ -14,8 +15,8 @@ namespace Tectonic
                                 .Configure<GlfwOptions>(options =>
                                 {
                                     options.Title = "Tectonic";
-                                    options.InitialWidth = 1920;
-                                    options.InitialHeight = 1080;
+                                    options.InitialWidth = 1280;
+                                    options.InitialHeight = 1280;
                                 })
                                 .BuildServiceProvider();
 
@@ -25,8 +26,9 @@ namespace Tectonic
 
             game.Initialise();
 
-            vulkanService.CreateStage<ClearStage>();
-            vulkanService.CreateStage<QuadStage>();
+            var clearStage = vulkanService.CreateStage<ClearStage>();
+            clearStage.ClearColour = new vec4(0.25f, 0.25f, 0.25f, 1f);
+            vulkanService.CreateStage<SpriteStage>();
 
             game.Start();
 

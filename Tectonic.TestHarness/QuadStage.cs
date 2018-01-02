@@ -25,10 +25,10 @@ namespace Tectonic
 
         private readonly Vertex[] vertices =
         {
-            new Vertex(new vec2(-0.5f, -0.5f), new vec3(1.0f, 0.0f, 0.0f)),
-            new Vertex(new vec2(0.5f, -0.5f), new vec3(0.0f, 1.0f, 0.0f)),
-            new Vertex(new vec2(0.5f, 0.5f), new vec3(0.0f, 0.0f, 1.0f)),
-            new Vertex(new vec2(-0.5f, 0.5f), new vec3(1.0f, 1.0f, 1.0f))
+            new Vertex(new vec2(-1f, -1f), new vec3(1.0f, 0.0f, 0.0f)),
+            new Vertex(new vec2(1f, -1f), new vec3(0.0f, 1.0f, 0.0f)),
+            new Vertex(new vec2(1f, 1f), new vec3(0.0f, 0.0f, 1.0f)),
+            new Vertex(new vec2(-1f, 1f), new vec3(1.0f, 1.0f, 1.0f))
         };
 
         private readonly uint[] indices = { 0, 1, 2, 2, 3, 0 };

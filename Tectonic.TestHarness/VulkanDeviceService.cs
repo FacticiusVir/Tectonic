@@ -19,7 +19,7 @@ namespace Tectonic
         private readonly DebugReportCallbackDelegate debugReportDelegate;
         private readonly IUpdateLoopService updateLoop;
         private readonly GlfwService glfwService;
-
+        private readonly IServiceProvider provider;
         private Instance instance;
         private DebugReportCallback reportCallback;
         private Surface surface;
@@ -54,11 +54,12 @@ namespace Tectonic
         private readonly List<RenderStage> renderStages = new List<RenderStage>();
         private VulkanBufferManager bufferManager;
 
-        public VulkanDeviceService(IUpdateLoopService updateLoop, GlfwService glfwService)
+        public VulkanDeviceService(IUpdateLoopService updateLoop, GlfwService glfwService, IServiceProvider provider)
         {
             this.debugReportDelegate = this.DebugReport;
             this.updateLoop = updateLoop;
             this.glfwService = glfwService;
+            this.provider = provider;
         }
 
         public override void Initialise(Game game)
@@ -170,9 +171,9 @@ namespace Tectonic
         }
 
         public T CreateStage<T>()
-            where T : RenderStage, new()
+            where T : RenderStage
         {
-            var result = new T();
+            var result = this.provider.CreateInstance<T>();
 
             if (this.device != null)
             {

@@ -48,9 +48,9 @@ namespace Tectonic
 
         public VulkanImage CreateImage(uint width, uint height, Format format, ImageTiling imageTiling, ImageUsageFlags usage, MemoryPropertyFlags properties)
         {
-            this.CreateImage(width, height, format, imageTiling, usage, properties, out var image, out var _, out DeviceSize _);
+            this.CreateImage(width, height, format, imageTiling, usage, properties, out var image, out var imageMemory, out DeviceSize offset, out DeviceSize size);
 
-            return new VulkanImage(this, image, format);
+            return new VulkanImage(this, image, imageMemory, offset, size, format);
         }
 
         private void CreateBuffer(ulong size, BufferUsageFlags usage, MemoryPropertyFlags properties, out Buffer buffer, out DeviceMemory bufferMemory, out DeviceSize memoryOffset)
@@ -66,7 +66,7 @@ namespace Tectonic
             buffer.BindMemory(bufferMemory, memoryOffset);
         }
 
-        internal void CopyBuffer(Buffer sourceBuffer, Buffer destinationBuffer, ulong size)
+        internal void Copy(Buffer sourceBuffer, Buffer destinationBuffer, ulong size)
         {
             var transferBuffers = this.BeginSingleTimeCommand();
 
@@ -89,7 +89,7 @@ namespace Tectonic
 
             this.stagingBufferMemory.Unmap();
 
-            this.CopyBuffer(this.stagingBuffer, buffer, dataOffset + dataSize);
+            this.Copy(this.stagingBuffer, buffer, dataOffset + dataSize);
         }
 
         internal void UpdateBuffer<T>(Buffer buffer, T[] data, int offset = 0)
@@ -111,7 +111,7 @@ namespace Tectonic
 
             this.stagingBufferMemory.Unmap();
 
-            this.CopyBuffer(this.stagingBuffer, buffer, dataOffset + dataSize);
+            this.Copy(this.stagingBuffer, buffer, dataOffset + dataSize);
         }
 
 
@@ -132,7 +132,7 @@ namespace Tectonic
             }
         }
 
-        internal void CopyImage(Image sourceImage, Image destinationImage, uint width, uint height)
+        internal void Copy(Image sourceImage, Image destinationImage, uint width, uint height)
         {
             var transferBuffers = this.BeginSingleTimeCommand();
 
@@ -239,13 +239,15 @@ namespace Tectonic
             this.transientCommandPool.FreeCommandBuffers(transferBuffers);
         }
 
-        private void CreateImage(uint width, uint height, Format format, ImageTiling imageTiling, ImageUsageFlags usage, MemoryPropertyFlags properties, out Image image, out DeviceMemory imageMemory, out DeviceSize memoryOffset)
+        private void CreateImage(uint width, uint height, Format format, ImageTiling imageTiling, ImageUsageFlags usage, MemoryPropertyFlags properties, out Image image, out DeviceMemory imageMemory, out DeviceSize memoryOffset, out DeviceSize memorySize)
         {
             image = this.device.CreateImage(ImageType.Image2d, format, new Extent3D(width, height, 1), 1, 1, SampleCountFlags.SampleCount1, imageTiling, usage, SharingMode.Exclusive, null, ImageLayout.Preinitialized);
 
             var memoryRequirements = image.GetMemoryRequirements();
 
-            imageMemory = this.device.AllocateMemory(memoryRequirements.Size, this.FindMemoryType(memoryRequirements.MemoryTypeBits, properties));
+            memorySize = memoryRequirements.Size;
+
+            imageMemory = this.device.AllocateMemory(memorySize, this.FindMemoryType(memoryRequirements.MemoryTypeBits, properties));
 
             memoryOffset = 0;
 
