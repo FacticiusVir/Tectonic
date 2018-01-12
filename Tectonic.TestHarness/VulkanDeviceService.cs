@@ -522,7 +522,7 @@ namespace Tectonic
 
                     commandBuffer.Begin(CommandBufferUsageFlags.SimultaneousUse);
 
-                    commandBuffer.BeginRenderPass(renderPass, frameBuffer, new Rect2D(new Offset2D(), this.swapChainExtent), new ClearValue[2], SubpassContents.Inline);
+                    commandBuffer.BeginRenderPass(renderPass, frameBuffer, new Rect2D(this.swapChainExtent), new ClearValue[2], SubpassContents.Inline);
 
                     foreach (var renderStage in this.renderStages)
                     {

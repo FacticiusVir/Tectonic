@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 
 namespace Tectonic
 {
@@ -44,6 +45,8 @@ namespace Tectonic
             this.componentsToDeregister.Add(updatableComponent);
         }
 
+        private readonly Queue<float> deltaTs = new Queue<float>();
+
         public void RunFrame()
         {
             // This implementation gets a bit weird to avoid any use of Linq,
@@ -56,6 +59,15 @@ namespace Tectonic
             long timestamp = Stopwatch.GetTimestamp();
             this.DeltaT = (float)((timestamp - this.lastTimestamp) / (double)Stopwatch.Frequency);
             this.lastTimestamp = timestamp;
+
+            this.deltaTs.Enqueue(this.DeltaT);
+
+            while (this.deltaTs.Count > 5)
+            {
+                this.deltaTs.Dequeue();
+            }
+
+            Debug.WriteLine(this.deltaTs.Count / this.deltaTs.Sum());
 
             for (int stageIndex = 0; stageIndex < this.registeredStages.Count; stageIndex++)
             {

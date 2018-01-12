@@ -27,7 +27,7 @@ namespace Tectonic
             game.Initialise();
 
             var clearStage = vulkanService.CreateStage<ClearStage>();
-            clearStage.ClearColour = new vec4(0.25f, 0.25f, 0.25f, 1f);
+            clearStage.ClearColour = new vec4(0.25f, 0.25f, 0.25f, 0f);
             vulkanService.CreateStage<SpriteStage>();
 
             game.Start();

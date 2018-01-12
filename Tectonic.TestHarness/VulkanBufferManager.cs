@@ -1,4 +1,5 @@
 ﻿using SharpVk;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace Tectonic
@@ -43,7 +44,7 @@ namespace Tectonic
         {
             this.CreateBuffer(size, usage, properties, out var buffer, out var _, out DeviceSize _);
 
-            return new VulkanBuffer(this, buffer);
+            return new VulkanBuffer(this, buffer, size);
         }
 
         public VulkanImage CreateImage(uint width, uint height, Format format, ImageTiling imageTiling, ImageUsageFlags usage, MemoryPropertyFlags properties)
@@ -66,11 +67,11 @@ namespace Tectonic
             buffer.BindMemory(bufferMemory, memoryOffset);
         }
 
-        internal void Copy(Buffer sourceBuffer, Buffer destinationBuffer, ulong size)
+        internal void Copy(Buffer sourceBuffer, Buffer destinationBuffer, ulong offset, ulong size)
         {
             var transferBuffers = this.BeginSingleTimeCommand();
 
-            transferBuffers[0].CopyBuffer(sourceBuffer, destinationBuffer, new[] { new BufferCopy { Size = size } });
+            transferBuffers[0].CopyBuffer(sourceBuffer, destinationBuffer, new[] { new BufferCopy { SourceOffset = offset, DestinationOffset = offset, Size = size } });
 
             this.EndSingleTimeCommand(transferBuffers);
         }
@@ -78,25 +79,28 @@ namespace Tectonic
         internal void UpdateBuffer<T>(Buffer buffer, T data, int offset = 0)
             where T : struct
         {
-            uint dataSize = (uint)Marshal.SizeOf<T>();
-            uint dataOffset = (uint)(offset * dataSize);
+            uint datumSize = (uint)Marshal.SizeOf<T>();
+            uint dataOffset = (uint)(offset * datumSize);
 
-            this.CheckStagingBufferSize(dataSize, dataOffset);
+            this.CheckStagingBufferSize(datumSize, dataOffset);
 
-            System.IntPtr memoryBuffer = this.stagingBufferMemory.Map(dataOffset, dataSize);
+            System.IntPtr memoryBuffer = this.stagingBufferMemory.Map(dataOffset, datumSize);
 
             Marshal.StructureToPtr(data, memoryBuffer, false);
 
             this.stagingBufferMemory.Unmap();
 
-            this.Copy(this.stagingBuffer, buffer, dataOffset + dataSize);
+            this.Copy(this.stagingBuffer, buffer, dataOffset, datumSize);
         }
 
-        internal void UpdateBuffer<T>(Buffer buffer, T[] data, int offset = 0)
+        internal void UpdateBuffer<T>(Buffer buffer, T[] data, DeviceSize maxSize, int offset = 0)
             where T : struct
         {
-            uint dataSize = (uint)(Marshal.SizeOf<T>() * data.Length);
-            uint dataOffset = (uint)(offset * dataSize);
+            uint datumSize = (uint)Marshal.SizeOf<T>();
+            uint dataSize = (uint)(datumSize * data.Length);
+            uint dataOffset = (uint)(offset * datumSize);
+
+            Debug.Assert(dataOffset + dataSize <= maxSize);
 
             this.CheckStagingBufferSize(dataSize, dataOffset);
 
@@ -111,7 +115,7 @@ namespace Tectonic
 
             this.stagingBufferMemory.Unmap();
 
-            this.Copy(this.stagingBuffer, buffer, dataOffset + dataSize);
+            this.Copy(this.stagingBuffer, buffer, dataOffset, dataSize);
         }
 
 
