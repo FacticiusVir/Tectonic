@@ -67,7 +67,7 @@ namespace Tectonic
                 this.deltaTs.Dequeue();
             }
 
-            Debug.WriteLine(this.deltaTs.Count / this.deltaTs.Sum());
+            //Debug.WriteLine(this.deltaTs.Count / this.deltaTs.Sum());
 
             for (int stageIndex = 0; stageIndex < this.registeredStages.Count; stageIndex++)
             {

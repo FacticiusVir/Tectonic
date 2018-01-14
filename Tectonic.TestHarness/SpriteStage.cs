@@ -22,9 +22,12 @@ namespace Tectonic
         private VulkanBuffer vertexBuffer;
         private VulkanBuffer indexBuffer;
         private VulkanBuffer spriteDataBuffer;
+        private VulkanBuffer indirectCommandBuffer;
+        private VulkanBuffer renderStateBuffer;
 
         private int indexCount;
         private float aspectRatio;
+        private mat4 projectionMatrix;
         private VulkanImage textureImage;
         private ImageView textureImageView;
         private Sampler textureSampler;
@@ -41,18 +44,26 @@ namespace Tectonic
 
         private readonly uint[] indices = { 0, 1, 2, 2, 3, 0 };
 
-        private const int maxInstanceCount = 256 * 16;
+        private readonly int maxInstanceCount;
 
-        private int currentInstanceCount = 32 * 32;
+        private readonly vec2 spriteSize;
+
+        private int currentInstanceCount = 0;
+
+        public SpriteStage(int maxInstanceCount)
+        {
+            this.maxInstanceCount = maxInstanceCount;
+        }
 
         public override void Initialise(Device device, VulkanBufferManager bufferManager)
         {
             this.vertexShader = device.CreateVertexModule(shanq => from input in shanq.GetInput<Vertex>()
                                                                    from spriteData in shanq.GetInput<SpriteData>()
+                                                                   from renderState in shanq.GetBinding<RenderState>(1)
                                                                    select new VertexOutput
                                                                    {
-                                                                       Uv = new vec2(input.Uv.x * spriteData.Size.x, input.Uv.y * spriteData.Size.y) + spriteData.AtlasPosition,
-                                                                       Position = spriteData.Transform * new vec4(input.Position, 0, 1)
+                                                                       Uv = new vec2((spriteData.AtlasPosition.x + input.Uv.x), (spriteData.AtlasPosition.y + input.Uv.y)) * renderState.SpriteSize,
+                                                                       Position = renderState.Projection * renderState.View * spriteData.Transform * new vec4(input.Position, 0, 1)
                                                                    });
 
             this.fragmentShader = device.CreateFragmentModule(shanq => from input in shanq.GetInput<FragmentInput>()
@@ -60,31 +71,37 @@ namespace Tectonic
                                                                        let texColour = texture.Sample(input.Uv)
                                                                        select new FragmentOutput
                                                                        {
-                                                                           Colour = texColour
+                                                                           Colour = texColour * new vec4(0.5f, 0.5f, 0.5f, 1)
                                                                        });
 
             indexCount = indices.Count();
 
-            this.vertexBuffer = bufferManager.CreateBuffer((uint)Marshal.SizeOf<Vertex>() * (uint)vertices.Length, BufferUsageFlags.TransferDestination | BufferUsageFlags.VertexBuffer, MemoryPropertyFlags.DeviceLocal);
+            this.vertexBuffer = bufferManager.CreateBuffer<Vertex>(vertices.Length, BufferUsageFlags.TransferDestination | BufferUsageFlags.VertexBuffer, MemoryPropertyFlags.DeviceLocal);
 
             this.vertexBuffer.Update(vertices);
 
-            this.indexBuffer = bufferManager.CreateBuffer((uint)Marshal.SizeOf<uint>() * (uint)indices.Length, BufferUsageFlags.TransferDestination | BufferUsageFlags.IndexBuffer, MemoryPropertyFlags.DeviceLocal);
+            this.indexBuffer = bufferManager.CreateBuffer<uint>(indices.Length, BufferUsageFlags.TransferDestination | BufferUsageFlags.IndexBuffer, MemoryPropertyFlags.DeviceLocal);
 
             this.indexBuffer.Update(indices);
 
-            this.spriteDataBuffer = bufferManager.CreateBuffer((uint)Marshal.SizeOf<SpriteData>() * maxInstanceCount, BufferUsageFlags.TransferDestination | BufferUsageFlags.UniformBuffer, MemoryPropertyFlags.DeviceLocal);
+            this.spriteDataBuffer = bufferManager.CreateBuffer<SpriteData>(maxInstanceCount, BufferUsageFlags.TransferDestination | BufferUsageFlags.VertexBuffer, MemoryPropertyFlags.DeviceLocal);
+
+            this.spriteDataBuffer.Update(new SpriteData());
+
+            this.indirectCommandBuffer = bufferManager.CreateBuffer<DrawIndexedIndirectCommand>(1, BufferUsageFlags.TransferDestination | BufferUsageFlags.IndirectBuffer, MemoryPropertyFlags.DeviceLocal);
+
+            this.renderStateBuffer = bufferManager.CreateBuffer<RenderState>(1, BufferUsageFlags.TransferDestination | BufferUsageFlags.UniformBuffer, MemoryPropertyFlags.DeviceLocal);
 
             const string building = ".\\textures\\iso-64x64-building.png";
-            const string square = ".\\textures\\square.png";
+            const string cube = ".\\textures\\cube.png";
 
-            var textureSource = SixLabors.ImageSharp.Image.Load(building);
+            var textureSource = SixLabors.ImageSharp.Image.Load(cube);
 
             uint textureWidth = (uint)textureSource.Width;
             uint textureHeight = (uint)textureSource.Height;
             DeviceSize imageSize = textureWidth * textureHeight * 4;
 
-            using (var stagingImage = bufferManager.CreateImage(textureWidth, textureHeight, Format.R8G8B8A8UNorm, ImageTiling.Linear, ImageUsageFlags.TransferSource, MemoryPropertyFlags.HostVisible | MemoryPropertyFlags.HostCoherent))
+            using (var stagingImage = bufferManager.CreateImage(textureWidth, textureHeight, Format.R8G8B8A8UNorm, ImageTiling.Linear, ImageUsageFlags.TransferSource, MemoryPropertyFlags.HostVisible | MemoryPropertyFlags.HostCoherent, true))
             {
                 IntPtr memoryBuffer = stagingImage.Map();
 
@@ -98,10 +115,10 @@ namespace Tectonic
 
                 stagingImage.Unmap();
 
-                this.textureImage = bufferManager.CreateImage(textureWidth, textureHeight, Format.R8G8B8A8UNorm, ImageTiling.Optimal, ImageUsageFlags.TransferDestination | ImageUsageFlags.Sampled, MemoryPropertyFlags.DeviceLocal);
+                this.textureImage = bufferManager.CreateImage(textureWidth, textureHeight, Format.R8G8B8A8UNorm, ImageTiling.Optimal, ImageUsageFlags.TransferDestination | ImageUsageFlags.Sampled, MemoryPropertyFlags.DeviceLocal, false);
 
                 stagingImage.TransitionImageLayout(ImageLayout.Preinitialized, ImageLayout.TransferSourceOptimal);
-                this.textureImage.TransitionImageLayout(ImageLayout.Preinitialized, ImageLayout.TransferDestinationOptimal);
+                this.textureImage.TransitionImageLayout(ImageLayout.Undefined, ImageLayout.TransferDestinationOptimal);
 
                 stagingImage.Copy(this.textureImage, textureWidth, textureHeight);
                 this.textureImage.TransitionImageLayout(ImageLayout.TransferDestinationOptimal, ImageLayout.ShaderReadOnlyOptimal);
@@ -153,6 +170,13 @@ namespace Tectonic
                         DescriptorCount = 1,
                         DescriptorType = DescriptorType.CombinedImageSampler,
                         StageFlags = ShaderStageFlags.Fragment
+                    },
+                    new DescriptorSetLayoutBinding
+                    {
+                        Binding = 1,
+                        DescriptorCount = 1,
+                        DescriptorType = DescriptorType.UniformBuffer,
+                        StageFlags = ShaderStageFlags.Vertex
                     }
                 });
 
@@ -178,6 +202,23 @@ namespace Tectonic
                     DestinationBinding = 0,
                     DestinationArrayElement = 0,
                     DescriptorType = DescriptorType.CombinedImageSampler
+                },
+                new WriteDescriptorSet
+                {
+                    BufferInfo = new[]
+                    {
+                        new DescriptorBufferInfo
+                        {
+                            Buffer = this.renderStateBuffer.Buffer,
+                            Offset = 0,
+                            Range = Constants.WholeSize
+                        }
+                    },
+                    DescriptorCount = 1,
+                    DestinationSet = this.descriptorSet,
+                    DestinationBinding = 1,
+                    DestinationArrayElement = 0,
+                    DescriptorType = DescriptorType.UniformBuffer
                 }
             }, null);
         }
@@ -186,30 +227,9 @@ namespace Tectonic
         {
             this.aspectRatio = (float)targetExtent.Width / (float)targetExtent.Height;
 
-            var size = new vec2(64, 64);
+            this.projectionMatrix = mat4.Translate(0, -1, 0) * mat4.Scale(256f / targetExtent.Width, 256f / targetExtent.Height, 1);
 
-            var projection = mat4.Translate(0, -1, 0) * mat4.Scale(size.x / targetExtent.Width, size.y / targetExtent.Height, 1) * mat4.Scale(8);
-
-            var rand = new Random();
-
-            for (int layerIndex = 0; layerIndex < 1; layerIndex++)
-            {
-                this.spriteDataBuffer.Update(Enumerable.Range(0, 32).SelectMany(x => Enumerable.Range(0, 32).Select(y => (x, y))).Select(coord =>
-                        new SpriteData
-                        {
-                            AtlasPosition = new vec2(0, 0) * size,
-                            Size = size,
-                            Transform = projection * mat4.Translate(((coord.x - coord.y) * 0.5f) - 0.5f, ((coord.x + coord.y) * 0.25f) - (0.5f * layerIndex) - 3, 0)
-                        }).ToArray(), layerIndex * 256);
-            }
-
-            //this.spriteDataBuffer.Update(Enumerable.Range(0, 16).SelectMany(x => Enumerable.Range(0, 16).Select(y => (x, y))).Select(coord =>
-            //        new SpriteData
-            //        {
-            //            AtlasPosition = new vec2(6 + rand.Next(4), 6) * size,
-            //            Size = size,
-            //            Transform = projection * mat4.Translate(-0.5f + ((coord.x - coord.y) * 0.5f), ((coord.x + coord.y) * 0.25f), 0.001f * (32 - (coord.x + coord.y)))
-            //        }).ToArray(), 256);
+            this.renderStateBuffer.Update(new RenderState { Projection = mat4.Identity, View = mat4.Identity });
 
             this.pipeline = device.CreateGraphicsPipeline(null,
                 new[]
@@ -311,19 +331,23 @@ namespace Tectonic
 
             commandBuffer.BindDescriptorSets(PipelineBindPoint.Graphics, pipelineLayout, 0, this.descriptorSet, null);
 
-            commandBuffer.DrawIndexed((uint)indexCount, (uint)currentInstanceCount, 0, 0, 0);
+            commandBuffer.DrawIndexedIndirect(this.indirectCommandBuffer.Buffer, 0, 1, 0);
         }
 
-        private static uint[] LoadShaderData(string filePath, out int codeSize)
+        public void SetInstanceCount(int count)
         {
-            var fileBytes = System.IO.File.ReadAllBytes(filePath);
-            var shaderData = new uint[(int)Math.Ceiling(fileBytes.Length / 4f)];
+            this.currentInstanceCount = count;
+        }
 
-            System.Buffer.BlockCopy(fileBytes, 0, shaderData, 0, fileBytes.Length);
+        public void SetInstances(SpriteData[] sprites, int offset = 0)
+        {
+            this.spriteDataBuffer.Update(sprites, offset);
+        }
 
-            codeSize = fileBytes.Length;
-
-            return shaderData;
+        public override void Update()
+        {
+            this.renderStateBuffer.Update(new RenderState { Projection = this.projectionMatrix, View = mat4.Scale(2), SpriteSize = new vec2(256, 256) });
+            this.indirectCommandBuffer.Update(new DrawIndexedIndirectCommand((uint)indexCount, (uint)currentInstanceCount, 0, 0, 0));
         }
 
         private struct VertexOutput
@@ -393,18 +417,24 @@ namespace Tectonic
             }
         }
 
-        private struct SpriteData
+        private struct RenderState
+        {
+            public mat4 View;
+
+            public mat4 Projection;
+
+            public vec2 SpriteSize;
+        }
+
+        public struct SpriteData
         {
             [Location(2)]
-            public vec2 Size;
+            public ivec2 AtlasPosition;
 
             [Location(3)]
-            public vec2 AtlasPosition;
-
-            [Location(4)]
             public mat4 Transform;
 
-            public static VertexInputBindingDescription GetBindingDescription()
+            internal static VertexInputBindingDescription GetBindingDescription()
             {
                 return new VertexInputBindingDescription()
                 {
@@ -414,18 +444,16 @@ namespace Tectonic
                 };
             }
 
-            public static IEnumerable<VertexInputAttributeDescription> GetAttributeDescriptions()
+            internal static IEnumerable<VertexInputAttributeDescription> GetAttributeDescriptions()
             {
-                yield return new VertexInputAttributeDescription(2, 1, Format.R32G32SFloat, (uint)Marshal.OffsetOf<SpriteData>(nameof(Size)));
-
-                yield return new VertexInputAttributeDescription(3, 1, Format.R32G32SFloat, (uint)Marshal.OffsetOf<SpriteData>(nameof(AtlasPosition)));
+                yield return new VertexInputAttributeDescription(2, 1, Format.R32G32SInt, (uint)Marshal.OffsetOf<SpriteData>(nameof(AtlasPosition)));
 
                 uint transformOffset = (uint)Marshal.OffsetOf<SpriteData>(nameof(Transform));
                 int rowSize = Marshal.SizeOf<vec4>();
 
                 for (int elementIndex = 0; elementIndex < 4; elementIndex++)
                 {
-                    yield return new VertexInputAttributeDescription((uint)(4 + elementIndex), 1, Format.R32G32B32A32SFloat, (uint)(transformOffset + elementIndex * rowSize));
+                    yield return new VertexInputAttributeDescription((uint)(3 + elementIndex), 1, Format.R32G32B32A32SFloat, (uint)(transformOffset + elementIndex * rowSize));
                 }
             }
         };

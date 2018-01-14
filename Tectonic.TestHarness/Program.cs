@@ -12,6 +12,7 @@ namespace Tectonic
                                 .AddGameService<IUpdateLoopService, UpdateLoopService>()
                                 .AddGameService<GlfwService>()
                                 .AddGameService<VulkanDeviceService>()
+                                .AddGameService<MapRenderer>()
                                 .Configure<GlfwOptions>(options =>
                                 {
                                     options.Title = "Tectonic";
@@ -23,12 +24,13 @@ namespace Tectonic
             var game = provider.CreateInstance<Game>();
             var updateLoop = provider.GetRequiredService<UpdateLoopService>();
             var vulkanService = provider.GetRequiredService<VulkanDeviceService>();
+            var mapRenderer = provider.GetRequiredService<MapRenderer>();
 
             game.Initialise();
 
             var clearStage = vulkanService.CreateStage<ClearStage>();
             clearStage.ClearColour = new vec4(0.25f, 0.25f, 0.25f, 0f);
-            vulkanService.CreateStage<SpriteStage>();
+            mapRenderer.Bind(vulkanService);
 
             game.Start();
 

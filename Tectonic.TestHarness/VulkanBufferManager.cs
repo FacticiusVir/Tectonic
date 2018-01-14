@@ -1,5 +1,6 @@
 ﻿using SharpVk;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace Tectonic
@@ -8,20 +9,26 @@ namespace Tectonic
     {
         private readonly PhysicalDevice physicalDevice;
         private readonly Device device;
+        private readonly Queue barrierQueue;
         private readonly Queue transferQueue;
-        private readonly CommandPool transientCommandPool;
-
+        private readonly VulkanDeviceService.QueueFamilyIndices queueIndices;
+        private readonly CommandPool transferCommandPool;
+        private readonly CommandPool barrierCommandPool;
         private Buffer stagingBuffer;
         private DeviceMemory stagingBufferMemory;
         private uint stagingBufferSize;
 
-        public VulkanBufferManager(PhysicalDevice physicalDevice, Device device, Queue transferQueue, uint transferQueueFamily)
+        internal VulkanBufferManager(PhysicalDevice physicalDevice, Device device, Queue graphicsQueue, Queue transferQueue, VulkanDeviceService.QueueFamilyIndices queueIndices)
         {
             this.physicalDevice = physicalDevice;
             this.device = device;
+            this.barrierQueue = graphicsQueue;
             this.transferQueue = transferQueue;
 
-            this.transientCommandPool = device.CreateCommandPool(transferQueueFamily, CommandPoolCreateFlags.Transient);
+            this.queueIndices = queueIndices;
+
+            this.transferCommandPool = device.CreateCommandPool(this.queueIndices.TransferFamily.Value, CommandPoolCreateFlags.Transient);
+            this.barrierCommandPool = device.CreateCommandPool(this.queueIndices.GraphicsFamily.Value, CommandPoolCreateFlags.Transient);
         }
 
         private uint FindMemoryType(uint typeFilter, MemoryPropertyFlags flags)
@@ -40,6 +47,11 @@ namespace Tectonic
             throw new System.Exception("No compatible memory type.");
         }
 
+        public VulkanBuffer CreateBuffer<T>(int count, BufferUsageFlags usage, MemoryPropertyFlags properties)
+        {
+            return this.CreateBuffer((uint)(Marshal.SizeOf<T>() * count), usage, properties);
+        }
+
         public VulkanBuffer CreateBuffer(ulong size, BufferUsageFlags usage, MemoryPropertyFlags properties)
         {
             this.CreateBuffer(size, usage, properties, out var buffer, out var _, out DeviceSize _);
@@ -47,9 +59,9 @@ namespace Tectonic
             return new VulkanBuffer(this, buffer, size);
         }
 
-        public VulkanImage CreateImage(uint width, uint height, Format format, ImageTiling imageTiling, ImageUsageFlags usage, MemoryPropertyFlags properties)
+        public VulkanImage CreateImage(uint width, uint height, Format format, ImageTiling imageTiling, ImageUsageFlags usage, MemoryPropertyFlags properties, bool isPreinitialized)
         {
-            this.CreateImage(width, height, format, imageTiling, usage, properties, out var image, out var imageMemory, out DeviceSize offset, out DeviceSize size);
+            this.CreateImage(width, height, format, imageTiling, usage, properties, isPreinitialized, out var image, out var imageMemory, out DeviceSize offset, out DeviceSize size);
 
             return new VulkanImage(this, image, imageMemory, offset, size, format);
         }
@@ -69,11 +81,11 @@ namespace Tectonic
 
         internal void Copy(Buffer sourceBuffer, Buffer destinationBuffer, ulong offset, ulong size)
         {
-            var transferBuffers = this.BeginSingleTimeCommand();
+            var transferBuffers = this.BeginSingleTimeCommand(this.transferCommandPool);
 
             transferBuffers[0].CopyBuffer(sourceBuffer, destinationBuffer, new[] { new BufferCopy { SourceOffset = offset, DestinationOffset = offset, Size = size } });
 
-            this.EndSingleTimeCommand(transferBuffers);
+            this.EndSingleTimeCommand(transferBuffers, this.transferCommandPool, this.transferQueue);
         }
 
         internal void UpdateBuffer<T>(Buffer buffer, T data, int offset = 0)
@@ -138,7 +150,7 @@ namespace Tectonic
 
         internal void Copy(Image sourceImage, Image destinationImage, uint width, uint height)
         {
-            var transferBuffers = this.BeginSingleTimeCommand();
+            var transferBuffers = this.BeginSingleTimeCommand(this.transferCommandPool);
 
             ImageSubresourceLayers subresource = new ImageSubresourceLayers
             {
@@ -164,17 +176,48 @@ namespace Tectonic
 
             transferBuffers[0].CopyImage(sourceImage, ImageLayout.TransferSourceOptimal, destinationImage, ImageLayout.TransferDestinationOptimal, region);
 
-            this.EndSingleTimeCommand(transferBuffers);
+            this.EndSingleTimeCommand(transferBuffers, this.transferCommandPool, this.transferQueue);
         }
 
         internal void TransitionImageLayout(Image image, Format format, ImageLayout oldLayout, ImageLayout newLayout)
         {
-            var commandBuffer = this.BeginSingleTimeCommand();
+            PipelineStageFlags sourceStage = PipelineStageFlags.TopOfPipe;
+            PipelineStageFlags destinationStage = PipelineStageFlags.TopOfPipe;
+
+            AccessFlags MapAccessMask(ImageLayout layout, ref PipelineStageFlags stage)
+            {
+                switch (layout)
+                {
+                    case ImageLayout.Undefined:
+                        return AccessFlags.None;
+                    case ImageLayout.Preinitialized:
+                        stage = PipelineStageFlags.Host;
+                        return AccessFlags.HostWrite;
+                    case ImageLayout.TransferSourceOptimal:
+                        stage = PipelineStageFlags.Transfer;
+                        return AccessFlags.TransferRead;
+                    case ImageLayout.TransferDestinationOptimal:
+                        stage = PipelineStageFlags.Transfer;
+                        return AccessFlags.TransferWrite;
+                    case ImageLayout.ShaderReadOnlyOptimal:
+                        stage = PipelineStageFlags.VertexShader | PipelineStageFlags.FragmentShader;
+                        return AccessFlags.ShaderRead;
+                    case ImageLayout.DepthStencilAttachmentOptimal:
+                        stage = PipelineStageFlags.EarlyFragmentTests | PipelineStageFlags.LateFragmentTests;
+                        return AccessFlags.DepthStencilAttachmentRead | AccessFlags.DepthStencilAttachmentWrite;
+                }
+
+                throw new System.Exception($"Unsupported layout transition '{layout}'");
+            }
+
+            var commandBuffer = this.BeginSingleTimeCommand(this.barrierCommandPool);
 
             var barrier = new ImageMemoryBarrier
             {
                 OldLayout = oldLayout,
                 NewLayout = newLayout,
+                SourceAccessMask = MapAccessMask(oldLayout, ref sourceStage),
+                DestinationAccessMask = MapAccessMask(newLayout, ref destinationStage),
                 SourceQueueFamilyIndex = Constants.QueueFamilyIgnored,
                 DestinationQueueFamilyIndex = Constants.QueueFamilyIgnored,
                 Image = image,
@@ -189,63 +232,38 @@ namespace Tectonic
                     LayerCount = 1
                 }
             };
-
-            if (oldLayout == ImageLayout.Preinitialized && newLayout == ImageLayout.TransferSourceOptimal)
-            {
-                barrier.SourceAccessMask = AccessFlags.HostWrite;
-                barrier.DestinationAccessMask = AccessFlags.TransferRead;
-            }
-            else if (oldLayout == ImageLayout.Preinitialized && newLayout == ImageLayout.TransferDestinationOptimal)
-            {
-                barrier.SourceAccessMask = AccessFlags.HostWrite;
-                barrier.DestinationAccessMask = AccessFlags.TransferWrite;
-            }
-            else if (oldLayout == ImageLayout.TransferDestinationOptimal && newLayout == ImageLayout.ShaderReadOnlyOptimal)
-            {
-                barrier.SourceAccessMask = AccessFlags.TransferWrite;
-                barrier.DestinationAccessMask = AccessFlags.ShaderRead;
-            }
-            else if (oldLayout == ImageLayout.Undefined && newLayout == ImageLayout.DepthStencilAttachmentOptimal)
-            {
-                barrier.SourceAccessMask = AccessFlags.None;
-                barrier.DestinationAccessMask = AccessFlags.DepthStencilAttachmentRead | AccessFlags.DepthStencilAttachmentWrite;
-            }
-            else
-            {
-                throw new System.Exception("Unsupported layout transition");
-            }
-
-            commandBuffer[0].PipelineBarrier(PipelineStageFlags.TopOfPipe,
-                                                PipelineStageFlags.TopOfPipe,
+            
+            commandBuffer[0].PipelineBarrier(sourceStage,
+                                                destinationStage,
                                                 null,
                                                 null,
-                                                new[] { barrier });
+                                                barrier);
 
-            this.EndSingleTimeCommand(commandBuffer);
+            this.EndSingleTimeCommand(commandBuffer, this.barrierCommandPool, this.barrierQueue);
         }
 
-        private CommandBuffer[] BeginSingleTimeCommand()
+        private CommandBuffer[] BeginSingleTimeCommand(CommandPool pool)
         {
-            var result = device.AllocateCommandBuffers(this.transientCommandPool, CommandBufferLevel.Primary, 1);
+            var result = device.AllocateCommandBuffers(pool, CommandBufferLevel.Primary, 1);
 
             result[0].Begin(CommandBufferUsageFlags.OneTimeSubmit);
 
             return result;
         }
 
-        private void EndSingleTimeCommand(CommandBuffer[] transferBuffers)
+        private void EndSingleTimeCommand(CommandBuffer[] buffers, CommandPool pool, Queue queue)
         {
-            transferBuffers[0].End();
+            buffers[0].End();
 
-            this.transferQueue.Submit(new[] { new SubmitInfo { CommandBuffers = transferBuffers } }, null);
-            this.transferQueue.WaitIdle();
+            queue.Submit(new SubmitInfo { CommandBuffers = buffers }, null);
+            queue.WaitIdle();
 
-            this.transientCommandPool.FreeCommandBuffers(transferBuffers);
+            pool.FreeCommandBuffers(buffers);
         }
 
-        private void CreateImage(uint width, uint height, Format format, ImageTiling imageTiling, ImageUsageFlags usage, MemoryPropertyFlags properties, out Image image, out DeviceMemory imageMemory, out DeviceSize memoryOffset, out DeviceSize memorySize)
+        private void CreateImage(uint width, uint height, Format format, ImageTiling imageTiling, ImageUsageFlags usage, MemoryPropertyFlags properties, bool isPreinitialized, out Image image, out DeviceMemory imageMemory, out DeviceSize memoryOffset, out DeviceSize memorySize)
         {
-            image = this.device.CreateImage(ImageType.Image2d, format, new Extent3D(width, height, 1), 1, 1, SampleCountFlags.SampleCount1, imageTiling, usage, SharingMode.Exclusive, null, ImageLayout.Preinitialized);
+            image = this.device.CreateImage(ImageType.Image2d, format, new Extent3D(width, height, 1), 1, 1, SampleCountFlags.SampleCount1, imageTiling, usage, this.queueIndices.Indices.Count() == 1 ? SharingMode.Exclusive : SharingMode.Concurrent, this.queueIndices.Indices.ToArray(), isPreinitialized ? ImageLayout.Preinitialized : ImageLayout.Undefined);
 
             var memoryRequirements = image.GetMemoryRequirements();
 

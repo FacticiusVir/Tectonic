@@ -74,7 +74,7 @@ namespace Tectonic
             this.CreateLogicalDevice();
 
             var queueFamilies = FindQueueFamilies(this.physicalDevice);
-            this.bufferManager = new VulkanBufferManager(this.physicalDevice, this.device, this.transferQueue, queueFamilies.TransferFamily.Value);
+            this.bufferManager = new VulkanBufferManager(this.physicalDevice, this.device, this.graphicsQueue, this.transferQueue, queueFamilies);
 
             this.CreateSwapChain();
             this.CreateCommandPool();
@@ -170,10 +170,10 @@ namespace Tectonic
             this.instance = null;
         }
 
-        public T CreateStage<T>()
+        public T CreateStage<T>(params object[] parameters)
             where T : RenderStage
         {
-            var result = this.provider.CreateInstance<T>();
+            var result = this.provider.CreateInstance<T>(parameters);
 
             if (this.device != null)
             {
@@ -428,7 +428,7 @@ namespace Tectonic
                 beginBuffer.Begin(CommandBufferUsageFlags.SimultaneousUse);
 
                 beginBuffer.PipelineBarrier(PipelineStageFlags.TopOfPipe,
-                                            PipelineStageFlags.TopOfPipe,
+                                            PipelineStageFlags.Transfer,
                                             null,
                                             null,
                                             new[]
@@ -460,34 +460,36 @@ namespace Tectonic
                 beginBuffer.ClearColorImage(this.swapChainImages[bufferIndex], ImageLayout.TransferDestinationOptimal, (0f, 0f, 0f, 1f), imageColorRange);
                 beginBuffer.ClearDepthStencilImage(this.depthImages[bufferIndex].Image, ImageLayout.TransferDestinationOptimal, new ClearDepthStencilValue(1f, 0), imageDepthRange);
 
-                beginBuffer.PipelineBarrier(PipelineStageFlags.TopOfPipe,
-                                            PipelineStageFlags.TopOfPipe,
+                beginBuffer.PipelineBarrier(PipelineStageFlags.Transfer,
+                                            PipelineStageFlags.ColorAttachmentOutput,
                                             null,
                                             null,
-                                            new[]
+                                            new ImageMemoryBarrier
                                             {
-                                                new ImageMemoryBarrier
-                                                {
-                                                    OldLayout = ImageLayout.TransferDestinationOptimal,
-                                                    NewLayout = ImageLayout.ColorAttachmentOptimal,
-                                                    SourceQueueFamilyIndex = Constants.QueueFamilyIgnored,
-                                                    DestinationQueueFamilyIndex = Constants.QueueFamilyIgnored,
-                                                    SourceAccessMask = AccessFlags.TransferWrite,
-                                                    DestinationAccessMask = AccessFlags.ColorAttachmentRead | AccessFlags.ColorAttachmentWrite,
-                                                    Image = this.swapChainImages[bufferIndex],
-                                                    SubresourceRange = imageColorRange
-                                                },
-                                                new ImageMemoryBarrier
-                                                {
-                                                    OldLayout = ImageLayout.TransferDestinationOptimal,
-                                                    NewLayout = ImageLayout.DepthStencilAttachmentOptimal,
-                                                    SourceQueueFamilyIndex = Constants.QueueFamilyIgnored,
-                                                    DestinationQueueFamilyIndex = Constants.QueueFamilyIgnored,
-                                                    SourceAccessMask = AccessFlags.TransferWrite,
-                                                    DestinationAccessMask = AccessFlags.DepthStencilAttachmentRead | AccessFlags.DepthStencilAttachmentWrite,
-                                                    Image = this.depthImages[bufferIndex].Image,
-                                                    SubresourceRange = imageDepthRange
-                                                }
+                                                OldLayout = ImageLayout.TransferDestinationOptimal,
+                                                NewLayout = ImageLayout.ColorAttachmentOptimal,
+                                                SourceQueueFamilyIndex = Constants.QueueFamilyIgnored,
+                                                DestinationQueueFamilyIndex = Constants.QueueFamilyIgnored,
+                                                SourceAccessMask = AccessFlags.TransferWrite,
+                                                DestinationAccessMask = AccessFlags.ColorAttachmentRead | AccessFlags.ColorAttachmentWrite,
+                                                Image = this.swapChainImages[bufferIndex],
+                                                SubresourceRange = imageColorRange
+                                            });
+
+                beginBuffer.PipelineBarrier(PipelineStageFlags.Transfer,
+                                            PipelineStageFlags.EarlyFragmentTests,
+                                            null,
+                                            null,
+                                            new ImageMemoryBarrier
+                                            {
+                                                OldLayout = ImageLayout.TransferDestinationOptimal,
+                                                NewLayout = ImageLayout.DepthStencilAttachmentOptimal,
+                                                SourceQueueFamilyIndex = Constants.QueueFamilyIgnored,
+                                                DestinationQueueFamilyIndex = Constants.QueueFamilyIgnored,
+                                                SourceAccessMask = AccessFlags.TransferWrite,
+                                                DestinationAccessMask = AccessFlags.DepthStencilAttachmentRead | AccessFlags.DepthStencilAttachmentWrite,
+                                                Image = this.depthImages[bufferIndex].Image,
+                                                SubresourceRange = imageDepthRange
                                             });
 
                 beginBuffer.End();
@@ -496,7 +498,7 @@ namespace Tectonic
 
                 endBuffer.Begin(CommandBufferUsageFlags.SimultaneousUse);
 
-                endBuffer.PipelineBarrier(PipelineStageFlags.TopOfPipe,
+                endBuffer.PipelineBarrier(PipelineStageFlags.ColorAttachmentOutput,
                                             PipelineStageFlags.TopOfPipe,
                                             null,
                                             null,
@@ -549,7 +551,8 @@ namespace Tectonic
                                                                             depthFormat,
                                                                             ImageTiling.Optimal,
                                                                             ImageUsageFlags.DepthStencilAttachment | ImageUsageFlags.TransferDestination,
-                                                                            MemoryPropertyFlags.DeviceLocal);
+                                                                            MemoryPropertyFlags.DeviceLocal,
+                                                                            false);
 
                 this.depthImages[index].TransitionImageLayout(ImageLayout.Undefined, ImageLayout.DepthStencilAttachmentOptimal);
             }
@@ -722,7 +725,7 @@ namespace Tectonic
                     && FindQueueFamilies(device).IsComplete;
         }
 
-        private struct QueueFamilyIndices
+        internal struct QueueFamilyIndices
         {
             public uint? GraphicsFamily;
             public uint? PresentFamily;
